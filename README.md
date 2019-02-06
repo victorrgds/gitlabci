@@ -1,0 +1,2 @@
+# gitlabci
+pipeline gitlab
