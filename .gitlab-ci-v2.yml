@@ -1,0 +1,135 @@
+image: maven:3.5.3
+
+stages:
+  - test
+  - package-and-provision
+  - deploy
+  - desprovisioning
+
+unit-test:
+  stage: test
+  script:
+    - mvn test
+
+package-app:
+  stage: package-and-provision
+  script: 
+    - mvn clean package
+  artifacts:
+    paths:
+      - target/gitlabxaws.war
+
+create-instance:
+  image: python:alpine3.7
+  stage: package-and-provision
+  artifacts:
+    name: deploy-files
+    paths:
+      - provision/.terraform
+      - provision/terraform*
+      - provision/host
+  before_script:
+    - pip install awscli --upgrade --user && export PATH=~/.local/bin:$PATH
+    - cd provision
+    - wget https://releases.hashicorp.com/terraform/0.11.11/terraform_0.11.11_linux_amd64.zip -O terraform.zip
+    - unzip terraform.zip -d /bin 
+  environment:
+    name: $CI_COMMIT_REF_SLUG
+    on_stop: destroy-instance
+  script:
+    - terraform init
+    - terraform apply -auto-approve
+    - terraform output ip > host
+  only:
+    changes:
+      - provision/**/*
+      - src/**/*
+      - .gitlab-ci.yml
+      - .pom.xml
+  except:
+    - master
+
+destroy-instance:
+  image: python:alpine3.7
+  stage: desprovisioning
+  variables:
+    GIT_STRATEGY: none
+  before_script:
+    - pip install awscli --upgrade --user && export PATH=~/.local/bin:$PATH
+    - cd provision
+    - unzip terraform.zip -d /bin
+  script:
+    - terraform destroy -auto-approve
+  when: manual
+  environment:
+    name: $CI_COMMIT_REF_SLUG
+    action: stop
+  only:
+    changes:
+      - provision/**/*
+      - src/**/*
+      - .gitlab-ci.yml
+      - .pom.xml
+  except:
+    - master
+
+deploy-to-staging:
+  image: python
+  stage: deploy
+  before_script:
+   - cd provision
+   - pip install ansible
+   - echo "$GITLABKEY" | tr -d '\r' > chave.pem
+   - chmod 400 chave.pem
+   - export ANSIBLE_HOST_KEY_CHECKING=False
+  script:
+    - ansible-playbook -i host playbook.yml --private-key=chave.pem
+  after_script:
+    - echo "http://$(cat provision/host):8080/gitlabxaws"
+  environment:
+    name: $CI_COMMIT_REF_NAME
+  only:
+    changes:
+      - provision/**/*
+      - src/**/*
+      - .gitlab-ci.yml
+      - .pom.xml
+  except:
+    - master
+
+deploy-fail:destroy:
+  image: python:alpine3.7
+  stage: desprovisioning
+  variables:
+    GIT_STRATEGY: none
+  before_script:
+    - pip install awscli --upgrade --user && export PATH=~/.local/bin:$PATH
+    - cd provision
+    - unzip terraform.zip -d /bin
+  script:
+    - terraform destroy -auto-approve
+  when: on_failure
+  environment:
+    name: $CI_COMMIT_REF_SLUG
+    action: stop
+  except:
+    - master
+
+deploy-prod:
+  image: python:alpine3.7
+  stage: deploy
+  variables:
+    URL_PROD: "gitlabginger-env.6egvqvmyge.us-east-1.elasticbeanstalk.com"
+  before_script: 
+    - pip install awsebcli --upgrade --user && export PATH=~/.local/bin:$PATH
+    - cd provision
+  script:
+    - eb init gitlab-ginger -r ${REGION}
+    - eb deploy GitlabGinger-env
+  when: manual
+  allow_failure: false
+  environment:
+    name: producao
+    url: http://${URL_PROD}
+  only:
+    - master
