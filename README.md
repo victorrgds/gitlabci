@@ -1,2 +1,2 @@
 # gitlabci
-pipeline gitlab
+pipeline gitlab com 3 etapas
