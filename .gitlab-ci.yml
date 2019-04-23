@@ -1,3 +1,5 @@
+//pipeline 3 stages
+
 image: node
 
 stages:
